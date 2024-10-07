@@ -1,0 +1,10 @@
+googletrans==4.0.0-rc1
+opencv-python
+pytesseract
+Pillow
+matplotlib
+numpy
+torch
+transformers
+huggingface-hub
+gradio
