@@ -5,7 +5,7 @@ import io
 import cv2
 import numpy as np
 from transformers import pipeline, AutoTokenizer, BertLMHeadModel
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 from matplotlib import pyplot as plt
 
 # Step 1: Convert to grayscale and binarize the image
@@ -25,30 +25,47 @@ def noise_removal(image):
     return image
 
 # Step 3: Deskewing the image
+import cv2
+
 def get_skew_angle(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Ensure the image is correctly loaded and has the right format
+    if image is None:
+        raise ValueError("Input image is None. Please check if the image was loaded correctly.")
+    
+    # Check if the image has multiple channels or is grayscale
+    if len(image.shape) == 3 and image.shape[2] == 3:  # RGB or BGR image
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    elif len(image.shape) == 2:  # Grayscale image
+        gray = image
+    else:
+        raise ValueError("Unexpected image format. Ensure the image has 1 or 3 channels.")
+    
     blur = cv2.GaussianBlur(gray, (9, 9), 0)
     _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 5))
     dilate = cv2.dilate(thresh, kernel, iterations=2)
     contours, _ = cv2.findContours(dilate, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if len(contours) == 0:
+        raise ValueError("No contours found in the image.")
+    
     largest_contour = max(contours, key=cv2.contourArea)
     min_area_rect = cv2.minAreaRect(largest_contour)
     angle = min_area_rect[-1]
+    
     if angle < -45:
         angle = 90 + angle
+
     return -1.0 * angle
 
-def rotate_image(image, angle):
+def deskew(image):
+    angle = get_skew_angle(image)
     (h, w) = image.shape[:2]
     center = (w // 2, h // 2)
     M = cv2.getRotationMatrix2D(center, angle, 1.0)
     rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     return rotated
 
-def deskew(image):
-    angle = get_skew_angle(image)
-    return rotate_image(image, -angle)
 
 # Step 4: OCR using Tesseract
 def perform_ocr(image):
@@ -65,8 +82,12 @@ def generate_summary(input_text, max_length=500):
 
 summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
-# Step 6: Translation using Google Translate
-translator = Translator()
+# Step 6: Translation using deep-translator
+def translate_text(text, target_lang):
+    try:
+        return GoogleTranslator(source="auto", target=target_lang).translate(text)
+    except Exception as e:
+        return f"Translation failed: {str(e)}"
 
 def process_image(image):
     # Convert to OpenCV format
@@ -79,15 +100,15 @@ def process_image(image):
     deskewed_image = deskew(noise_removed_image)
 
     # Perform OCR
-    ocr_result = perform_ocr(deskewed_image)
+    ocr_result = perform_ocr(noise_removed_image)
     
     # Generate Summary
     summary = summarizer(ocr_result, max_length=130, min_length=30, do_sample=False)[0]['summary_text']
 
     # Translation to Hindi, Marathi, Bengali
-    translated_hi = translator.translate(summary, src='en', dest='hi').text
-    translated_mr = translator.translate(summary, src='en', dest='mr').text
-    translated_bn = translator.translate(summary, src='en', dest='bn').text
+    translated_hi = translate_text(summary, "hi")
+    translated_mr = translate_text(summary, "mr")
+    translated_bn = translate_text(summary, "bn")
 
     return ocr_result, summary, translated_hi, translated_mr, translated_bn
 
@@ -107,5 +128,4 @@ interface = gr.Interface(
 )
 
 if __name__ == "__main__":
-    interface.launch(server_name="0.0.0.0", server_port=8000)
-
+    interface.launch(server_name="localhost", server_port=8000, share=True)
